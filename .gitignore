@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Miscellaneous
 *.class
 *.log
@@ -51,3 +52,6 @@ windows/flutter/generated_plugin_registrant.*
 windows/flutter/generated_plugins.cmake
 pubspec.lock
 
+=======
+node_modules
+>>>>>>> bcd1412d0ddcce7e25b2ac5a53a08be0cd05333a
