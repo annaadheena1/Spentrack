@@ -1,12 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Progress } from "../components/ui/progress";
 import { motion, useAnimation } from "motion/react";
 import { 
-  TrendingDown, 
-  TrendingUp, 
   AlertCircle, 
   Sparkles, 
   ArrowUpRight,
@@ -18,7 +16,7 @@ import {
   Plus,
   Store
 } from "lucide-react";
-import { mockTransactions, encouragementMessages, highSpendApps } from "../lib/mockData";
+import { encouragementMessages, highSpendApps } from "../lib/mockData";
 import confetti from "canvas-confetti";
 import { toast } from "sonner";
 import { PurchaseNotification } from "../components/PurchaseNotification";
@@ -28,10 +26,11 @@ import { useCurrency } from "../hooks/useCurrency";
 import { parseAndStoreSMS } from "../lib/smsParser";
 import { generateSpendingFeedback, type SpendingContext } from "../lib/geminiService";
 import { useRealtimeBalance } from "../hooks/useRealtimeBalance";
+import { useLiveTransactions } from "../hooks/useLiveTransactions";
 
 export function Dashboard() {
   const currency = useCurrency();
-  const [currentBalance, setCurrentBalance] = useState(1250.45);
+  const { transactions, addTransaction } = useLiveTransactions();
   const [balanceThreshold, setBalanceThreshold] = useState(500);
   const [showEncouragement, setShowEncouragement] = useState(false);
   const [showPurchaseNotification, setShowPurchaseNotification] = useState(false);
@@ -45,10 +44,24 @@ export function Dashboard() {
     balanceCardControls.start({ opacity: 1, y: 0, transition: { duration: 0.5 } });
   }, [balanceCardControls]);
 
-  const recentTransactions = mockTransactions.slice(0, 5);
-  const weeklySpent = 464.63;
+  const currentBalance = transactions[0]?.balance ?? 0;
+  const recentTransactions = transactions.slice(0, 5);
   const weeklyBudget = 600;
-  const budgetProgress = (weeklySpent / weeklyBudget) * 100;
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const sevenDaysAgo = new Date(startOfToday);
+  sevenDaysAgo.setDate(startOfToday.getDate() - 6);
+
+  const weeklySpent = transactions
+    .filter((transaction) => transaction.type === "debit" && transaction.date >= sevenDaysAgo)
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+
+  const spentToday = transactions
+    .filter((transaction) => transaction.type === "debit" && transaction.date >= startOfToday)
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+
+  const averageDailySpent = weeklySpent / 7;
+  const budgetProgress = weeklyBudget > 0 ? Math.min(100, (weeklySpent / weeklyBudget) * 100) : 0;
 
   useEffect(() => {
     // Simulate checking balance threshold
@@ -60,7 +73,7 @@ export function Dashboard() {
     }
   }, [currentBalance, balanceThreshold, currency]);
 
-  const triggerLowBalanceAlert = async (newBalance: number) => {
+  const triggerLowBalanceAlert = useCallback(async (newBalance: number) => {
     setIsLowBalanceFlash(true);
     await balanceCardControls.start({
       x: [0, -14, 14, -10, 10, -6, 6, 0],
@@ -71,23 +84,65 @@ export function Dashboard() {
       description: `A new transaction dropped your balance to ${currency}${newBalance.toFixed(2)} — below your ${currency}${balanceThreshold} threshold!`,
       duration: 6000,
     });
-  };
+  }, [balanceCardControls, balanceThreshold, currency]);
+
+  const registerIncomingTransaction = useCallback((params: {
+    amount: number;
+    merchant?: string;
+    appName?: string;
+    timestamp?: string;
+    category?: string;
+    type?: "debit" | "credit";
+  }) => {
+    const amount = Number(params.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return;
+    }
+
+    const result = addTransaction({
+      amount,
+      merchant: params.merchant,
+      appName: params.appName,
+      timestamp: params.timestamp,
+      category: params.category,
+      type: params.type,
+    });
+
+    if (!result || result.isDuplicate) {
+      return;
+    }
+
+    if (result.transaction.balance < balanceThreshold) {
+      void triggerLowBalanceAlert(result.transaction.balance);
+      return;
+    }
+
+    const direction = result.transaction.type === "credit" ? "+" : "-";
+    toast.info(
+      `💳 New transaction: ${direction}${currency}${result.transaction.amount.toFixed(2)}${
+        result.transaction.merchant ? ` at ${result.transaction.merchant}` : ""
+      }`,
+      { duration: 4000 }
+    );
+  }, [addTransaction, balanceThreshold, currency, triggerLowBalanceAlert]);
+
+  const handleRealtimeTransaction = useCallback((row: {
+    amount?: number | string;
+    merchant?: string;
+    app_name?: string;
+    received_at?: string;
+  }) => {
+    registerIncomingTransaction({
+      amount: Number(row.amount),
+      merchant: row.merchant,
+      appName: row.app_name,
+      timestamp: row.received_at,
+      type: "debit",
+    });
+  }, [registerIncomingTransaction]);
 
   useRealtimeBalance({
-    onNewTransaction: (row) => {
-      if (!row.amount) return;
-      setCurrentBalance((prev) => {
-        const next = Math.max(0, prev - row.amount!);
-        if (next < balanceThreshold) {
-          triggerLowBalanceAlert(next);
-        } else {
-          toast.info(`💳 New transaction: −${currency}${row.amount!.toFixed(2)}${
-            row.merchant ? ` at ${row.merchant}` : ""
-          }`, { duration: 4000 });
-        }
-        return next;
-      });
-    },
+    onNewTransaction: handleRealtimeTransaction,
   });
 
   const handleGoodChoice = () => {
@@ -125,13 +180,26 @@ export function Dashboard() {
   const handleMiscSpending = () => {
     // First, add a random transaction
     const randomAmount = Math.random() * 50 + 5; // Random amount between $5-$55
+    const createdAt = new Date();
     const newSpending = {
       id: Date.now().toString(),
       amount: randomAmount,
       description: 'Miscellaneous', // Temporary description
-      date: new Date()
+      date: createdAt
     };
     setMiscSpendings([newSpending, ...miscSpendings]);
+
+    const miscResult = addTransaction({
+      amount: randomAmount,
+      merchant: newSpending.description,
+      category: "Miscellaneous",
+      type: "debit",
+      timestamp: createdAt.toISOString(),
+    });
+
+    if (miscResult && !miscResult.isDuplicate && miscResult.transaction.balance < balanceThreshold) {
+      void triggerLowBalanceAlert(miscResult.transaction.balance);
+    }
     
     // Then show notification asking what it was
     setTimeout(() => {
@@ -187,6 +255,16 @@ export function Dashboard() {
         description: result.message || "Could not parse simulated SMS.",
       });
       return;
+    }
+
+    if (result.parsed?.amount) {
+      registerIncomingTransaction({
+        amount: result.parsed.amount,
+        merchant: result.parsed.merchant,
+        appName: result.parsed.appName,
+        timestamp: result.parsed.timestamp,
+        type: "debit",
+      });
     }
 
     if (result.parsed?.appName && result.parsed.avgSpend) {
@@ -287,7 +365,7 @@ export function Dashboard() {
                 <ArrowUpRight className="w-4 h-4" />
                 <CardDescription>Spent Today</CardDescription>
               </div>
-              <CardTitle className="text-2xl">{currency}89.99</CardTitle>
+              <CardTitle className="text-2xl">{currency}{spentToday.toFixed(2)}</CardTitle>
             </CardHeader>
           </Card>
         </motion.div>
@@ -303,7 +381,7 @@ export function Dashboard() {
                 <ArrowDownRight className="w-4 h-4" />
                 <CardDescription>Avg. Daily</CardDescription>
               </div>
-              <CardTitle className="text-2xl">{currency}66.37</CardTitle>
+              <CardTitle className="text-2xl">{currency}{averageDailySpent.toFixed(2)}</CardTitle>
             </CardHeader>
           </Card>
         </motion.div>
@@ -357,46 +435,50 @@ export function Dashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle>Recent Transactions</CardTitle>
-                <CardDescription>Last 5 transactions</CardDescription>
+                <CardDescription>Last {Math.min(5, recentTransactions.length)} transactions</CardDescription>
               </div>
               <Button variant="ghost" size="sm">View All</Button>
             </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {recentTransactions.map((transaction) => (
-                <div
-                  key={transaction.id}
-                  className="flex items-center justify-between p-3 rounded-lg hover:bg-slate-50 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                      transaction.type === 'credit' ? 'bg-emerald-100' : 'bg-slate-100'
-                    }`}>
-                      {transaction.category === 'Shopping' && <ShoppingBag className="w-5 h-5 text-slate-600" />}
-                      {transaction.category === 'Food & Dining' && <Coffee className="w-5 h-5 text-slate-600" />}
-                      {transaction.category === 'Income' && <DollarSign className="w-5 h-5 text-emerald-600" />}
-                      {!['Shopping', 'Food & Dining', 'Income'].includes(transaction.category) && (
-                        <DollarSign className="w-5 h-5 text-slate-600" />
-                      )}
+              {recentTransactions.length === 0 ? (
+                <p className="text-sm text-slate-500">No transactions yet.</p>
+              ) : (
+                recentTransactions.map((transaction) => (
+                  <div
+                    key={transaction.id}
+                    className="flex items-center justify-between p-3 rounded-lg hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                        transaction.type === 'credit' ? 'bg-emerald-100' : 'bg-slate-100'
+                      }`}>
+                        {transaction.category === 'Shopping' && <ShoppingBag className="w-5 h-5 text-slate-600" />}
+                        {transaction.category === 'Food & Dining' && <Coffee className="w-5 h-5 text-slate-600" />}
+                        {transaction.category === 'Income' && <DollarSign className="w-5 h-5 text-emerald-600" />}
+                        {!['Shopping', 'Food & Dining', 'Income'].includes(transaction.category) && (
+                          <DollarSign className="w-5 h-5 text-slate-600" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="font-medium text-slate-900">{transaction.merchant}</p>
+                        <p className="text-sm text-slate-500">{transaction.category}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium text-slate-900">{transaction.merchant}</p>
-                      <p className="text-sm text-slate-500">{transaction.category}</p>
+                    <div className="text-right">
+                      <p className={`font-semibold ${
+                        transaction.type === 'credit' ? 'text-emerald-600' : 'text-slate-900'
+                      }`}>
+                        {transaction.type === 'credit' ? '+' : '-'}{currency}{transaction.amount.toFixed(2)}
+                      </p>
+                      <p className="text-sm text-slate-500">
+                        {transaction.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className={`font-semibold ${
-                      transaction.type === 'credit' ? 'text-emerald-600' : 'text-slate-900'
-                    }`}>
-                      {transaction.type === 'credit' ? '+' : '-'}{currency}{transaction.amount.toFixed(2)}
-                    </p>
-                    <p className="text-sm text-slate-500">
-                      {transaction.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    </p>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </CardContent>
         </Card>

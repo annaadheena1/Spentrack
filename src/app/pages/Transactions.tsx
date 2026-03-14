@@ -5,24 +5,28 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { motion } from "motion/react";
-import { Calendar, ShoppingBag, Coffee, DollarSign, Utensils, Car, Tv, Search, Filter, TrendingDown, TrendingUp, ArrowUpRight, ArrowDownRight } from "lucide-react";
-import { mockTransactions, type Transaction } from "../lib/mockData";
+import { Calendar, Search, Filter, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { type Transaction } from "../lib/mockData";
 import { useCurrency } from "../hooks/useCurrency";
+import { useLiveTransactions } from "../hooks/useLiveTransactions";
 
 export function Transactions() {
   const currency = useCurrency();
+  const { transactions } = useLiveTransactions();
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
 
-  const filteredTransactions = mockTransactions.filter((transaction) => {
+  const filteredTransactions = transactions.filter((transaction) => {
     const matchesSearch = transaction.merchant.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = categoryFilter === "all" || transaction.category === categoryFilter;
     const matchesType = typeFilter === "all" || transaction.type === typeFilter;
     return matchesSearch && matchesCategory && matchesType;
   });
 
-  const categories = Array.from(new Set(mockTransactions.map(t => t.category)));
+  const categories = Array.from(new Set(transactions.map((transaction) => transaction.category))).sort((a, b) =>
+    a.localeCompare(b)
+  );
 
   const groupTransactionsByDate = (transactions: Transaction[]) => {
     const groups: { [key: string]: Transaction[] } = {};

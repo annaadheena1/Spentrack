@@ -2,10 +2,11 @@ import { useEffect } from "react";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 
 interface RealtimeSMSRow {
-  amount?: number;
+  amount?: number | string;
   merchant?: string;
   app_name?: string;
   user_id?: string;
+  received_at?: string;
 }
 
 interface UseRealtimeBalanceOptions {
@@ -40,6 +41,5 @@ export function useRealtimeBalance({ onNewTransaction }: UseRealtimeBalanceOptio
     return () => {
       supabase.removeChannel(channel);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [onNewTransaction]);
 }
