@@ -18,7 +18,7 @@ import {
   Plus,
   Store
 } from "lucide-react";
-import { mockTransactions, encouragementMessages, warningMessages, highSpendApps } from "../lib/mockData";
+import { mockTransactions, encouragementMessages, highSpendApps } from "../lib/mockData";
 import confetti from "canvas-confetti";
 import { toast } from "sonner";
 import { PurchaseNotification } from "../components/PurchaseNotification";
