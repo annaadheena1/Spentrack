@@ -9,6 +9,8 @@ interface PurchaseNotificationProps {
   appName: string;
   appIcon: string;
   avgSpend: number;
+  amount?: number;
+  hourlyWage?: number;
   onClose: () => void;
   onSave: () => void;
   onContinue: () => void;
@@ -19,11 +21,15 @@ export function PurchaseNotification({
   appName,
   appIcon,
   avgSpend,
+  amount,
+  hourlyWage,
   onClose,
   onSave,
   onContinue,
 }: PurchaseNotificationProps) {
   const currency = useCurrency();
+  const spendAmount = amount ?? avgSpend;
+  const estimatedWorkHours = hourlyWage && hourlyWage > 0 ? spendAmount / hourlyWage : null;
 
   return (
     <AnimatePresence>
@@ -77,8 +83,13 @@ export function PurchaseNotification({
                       You're about to open <span className="font-bold text-amber-700">{appName}</span>
                     </p>
                     <p className="text-slate-600 text-sm">
-                      You typically spend <span className="font-bold text-amber-700">{currency}{avgSpend.toFixed(2)}</span> when using this app. Is this purchase really necessary?
+                      This spend is about <span className="font-bold text-amber-700">{currency}{spendAmount.toFixed(2)}</span>. You typically spend <span className="font-bold text-amber-700">{currency}{avgSpend.toFixed(2)}</span> here. Is this purchase really necessary?
                     </p>
+                    {estimatedWorkHours !== null && (
+                      <p className="text-slate-600 text-sm mt-2">
+                        That is roughly <span className="font-bold text-amber-700">{estimatedWorkHours.toFixed(1)} hours</span> of work at {currency}{hourlyWage!.toFixed(2)}/hour.
+                      </p>
+                    )}
                   </div>
                 </div>
 

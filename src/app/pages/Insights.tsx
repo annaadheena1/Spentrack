@@ -1,23 +1,238 @@
+import { useMemo } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { motion } from "motion/react";
 import { TrendingUp, TrendingDown, Minus, Award, Target, Calendar } from "lucide-react";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, LineChart, Line, CartesianGrid } from "recharts";
-import { spendingByCategory, dailySpending } from "../lib/mockData";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  LineChart,
+  Line,
+  CartesianGrid,
+} from "recharts";
 import { useCurrency } from "../hooks/useCurrency";
+import { useLiveTransactions } from "../hooks/useLiveTransactions";
+import { useFinancialSettings } from "../hooks/useFinancialSettings";
 
-const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
+
+type TrendDirection = "up" | "down" | "stable";
+
+interface CategorySpending {
+  category: string;
+  amount: number;
+  percentage: number;
+  trend: TrendDirection;
+}
+
+function sameMonth(date: Date, month: number, year: number) {
+  return date.getMonth() === month && date.getFullYear() === year;
+}
+
+function formatShortDate(date: Date) {
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
 
 export function Insights() {
   const currency = useCurrency();
-  const monthlyAverage = 1847.50;
-  const lastMonthSpending = 1654.30;
-  const savingsRate = 23;
-  const topCategory = spendingByCategory[0];
+  const { transactions } = useLiveTransactions();
+  const { monthlyBudget } = useFinancialSettings();
 
-  const trendPercentage = ((monthlyAverage - lastMonthSpending) / lastMonthSpending * 100).toFixed(1);
-  const isIncreasing = monthlyAverage > lastMonthSpending;
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+  const previousMonthDate = new Date(currentYear, currentMonth - 1, 1);
+  const previousMonth = previousMonthDate.getMonth();
+  const previousYear = previousMonthDate.getFullYear();
+
+  const monthLabel = now.toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+
+  const {
+    projectedMonthlySpending,
+    lastMonthSpending,
+    savingsRate,
+    topCategory,
+    trendPercentage,
+    isIncreasing,
+    dailySpending,
+    spendingByCategory,
+    totalSpentThisMonth,
+    currentMonthTransactionsCount,
+    busiestDay,
+    monthlyInsight,
+  } = useMemo(() => {
+    const currentMonthTransactions = transactions.filter((transaction) =>
+      sameMonth(transaction.date, currentMonth, currentYear)
+    );
+
+    const currentMonthDebits = currentMonthTransactions.filter(
+      (transaction) => transaction.type === "debit"
+    );
+
+    const currentMonthCredits = currentMonthTransactions.filter(
+      (transaction) => transaction.type === "credit"
+    );
+
+    const totalSpent = currentMonthDebits.reduce((sum, transaction) => sum + transaction.amount, 0);
+    const totalIncome = currentMonthCredits.reduce((sum, transaction) => sum + transaction.amount, 0);
+
+    const lastMonthTotal = transactions
+      .filter(
+        (transaction) =>
+          transaction.type === "debit" && sameMonth(transaction.date, previousMonth, previousYear)
+      )
+      .reduce((sum, transaction) => sum + transaction.amount, 0);
+
+    const daysElapsed = Math.max(1, now.getDate());
+    const projectedSpend = (totalSpent / daysElapsed) * 30;
+
+    const rawSavingsRate =
+      totalIncome > 0 ? ((totalIncome - totalSpent) / totalIncome) * 100 : 0;
+    const computedSavingsRate = Math.max(0, Math.round(rawSavingsRate));
+
+    const categoryTotals = currentMonthDebits.reduce((accumulator, transaction) => {
+      accumulator.set(
+        transaction.category,
+        (accumulator.get(transaction.category) || 0) + transaction.amount
+      );
+      return accumulator;
+    }, new Map<string, number>());
+
+    const previousCategoryTotals = transactions
+      .filter(
+        (transaction) =>
+          transaction.type === "debit" && sameMonth(transaction.date, previousMonth, previousYear)
+      )
+      .reduce((accumulator, transaction) => {
+        accumulator.set(
+          transaction.category,
+          (accumulator.get(transaction.category) || 0) + transaction.amount
+        );
+        return accumulator;
+      }, new Map<string, number>());
+
+    const categories: CategorySpending[] = Array.from(categoryTotals.entries())
+      .map(([category, amount]) => {
+        const previousAmount = previousCategoryTotals.get(category) || 0;
+        const trend: TrendDirection =
+          amount > previousAmount ? "up" : amount < previousAmount ? "down" : "stable";
+
+        return {
+          category,
+          amount,
+          percentage: totalSpent > 0 ? Math.round((amount / totalSpent) * 100) : 0,
+          trend,
+        };
+      })
+      .sort((a, b) => b.amount - a.amount);
+
+    const topSpendingCategory =
+      categories[0] ||
+      ({
+        category: "No spending yet",
+        amount: 0,
+        percentage: 0,
+        trend: "stable",
+      } satisfies CategorySpending);
+
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const last7Days = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(today);
+      date.setDate(today.getDate() - (6 - index));
+      return date;
+    });
+
+    const dailyTotals = new Map<string, number>();
+    transactions.forEach((transaction) => {
+      if (transaction.type !== "debit") {
+        return;
+      }
+
+      const key = formatShortDate(transaction.date);
+      dailyTotals.set(key, (dailyTotals.get(key) || 0) + transaction.amount);
+    });
+
+    const spendingLast7Days = last7Days.map((date) => ({
+      date: formatShortDate(date),
+      amount: Number((dailyTotals.get(formatShortDate(date)) || 0).toFixed(2)),
+    }));
+
+    const monthDayTransactionCounts = currentMonthTransactions.reduce((accumulator, transaction) => {
+      const dayKey = formatShortDate(transaction.date);
+      accumulator.set(dayKey, (accumulator.get(dayKey) || 0) + 1);
+      return accumulator;
+    }, new Map<string, number>());
+
+    let busiestDayLabel = "No activity yet";
+    let busiestDayCount = 0;
+    monthDayTransactionCounts.forEach((count, dayKey) => {
+      if (count > busiestDayCount) {
+        busiestDayCount = count;
+        busiestDayLabel = dayKey;
+      }
+    });
+
+    const budgetUsagePercent = monthlyBudget > 0 ? (totalSpent / monthlyBudget) * 100 : 0;
+    let insightText = "Keep going. Every intentional purchase strengthens your financial discipline.";
+
+    if (budgetUsagePercent >= 100) {
+      insightText = `You are over this month's budget by ${currency}${(totalSpent - monthlyBudget).toFixed(2)}. Time to tighten spending for the rest of the month.`;
+    } else if (budgetUsagePercent >= 80) {
+      insightText = `Heads up: you've already used ${budgetUsagePercent.toFixed(0)}% of your monthly budget. Prioritize essentials for the remaining days.`;
+    } else if (budgetUsagePercent <= 50) {
+      insightText = `Strong control this month: ${currency}${(monthlyBudget - totalSpent).toFixed(2)} is still available in your monthly budget.`;
+    }
+
+    const trendPercent =
+      lastMonthTotal > 0
+        ? ((projectedSpend - lastMonthTotal) / lastMonthTotal) * 100
+        : 0;
+
+    return {
+      projectedMonthlySpending: projectedSpend,
+      lastMonthSpending: lastMonthTotal,
+      savingsRate: computedSavingsRate,
+      topCategory: topSpendingCategory,
+      trendPercentage: Math.abs(trendPercent).toFixed(1),
+      isIncreasing: trendPercent >= 0,
+      dailySpending: spendingLast7Days,
+      spendingByCategory:
+        categories.length > 0
+          ? categories
+          : [
+              {
+                category: "No spending yet",
+                amount: 0,
+                percentage: 0,
+                trend: "stable" as const,
+              },
+            ],
+      totalSpentThisMonth: totalSpent,
+      currentMonthTransactionsCount: currentMonthTransactions.length,
+      busiestDay: busiestDayLabel,
+      monthlyInsight: insightText,
+    };
+  }, [
+    currency,
+    currentMonth,
+    currentYear,
+    monthlyBudget,
+    now,
+    previousMonth,
+    previousYear,
+    transactions,
+  ]);
 
   return (
     <div className="space-y-6 pb-6">
@@ -34,7 +249,7 @@ export function Insights() {
           </div>
           <Badge variant="outline" className="gap-2">
             <Calendar className="w-4 h-4" />
-            March 2026
+            {monthLabel}
           </Badge>
         </div>
       </motion.div>
@@ -48,8 +263,8 @@ export function Insights() {
         >
           <Card>
             <CardHeader className="pb-3">
-              <CardDescription>Monthly Average</CardDescription>
-              <CardTitle className="text-3xl">{currency}{monthlyAverage.toFixed(2)}</CardTitle>
+              <CardDescription>Projected Monthly Spend</CardDescription>
+              <CardTitle className="text-3xl">{currency}{projectedMonthlySpending.toFixed(2)}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-2">
@@ -57,14 +272,14 @@ export function Insights() {
                   <>
                     <TrendingUp className="w-4 h-4 text-red-600" />
                     <span className="text-sm text-red-600 font-medium">
-                      +{trendPercentage}% from last month
+                      +{trendPercentage}% vs last month
                     </span>
                   </>
                 ) : (
                   <>
                     <TrendingDown className="w-4 h-4 text-emerald-600" />
                     <span className="text-sm text-emerald-600 font-medium">
-                      {trendPercentage}% from last month
+                      -{trendPercentage}% vs last month
                     </span>
                   </>
                 )}
@@ -108,7 +323,7 @@ export function Insights() {
               <div className="flex items-center gap-2">
                 <Award className="w-4 h-4 text-emerald-600" />
                 <span className="text-sm text-emerald-600 font-medium">
-                  Great job saving!
+                  Based on this month's income vs spend
                 </span>
               </div>
             </CardContent>
@@ -141,19 +356,19 @@ export function Insights() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis dataKey="date" stroke="#64748b" />
                     <YAxis stroke="#64748b" />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: '#fff', 
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '8px'
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#fff",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "8px",
                       }}
                     />
-                    <Line 
-                      type="monotone" 
-                      dataKey="amount" 
-                      stroke="#10b981" 
+                    <Line
+                      type="monotone"
+                      dataKey="amount"
+                      stroke="#10b981"
                       strokeWidth={2}
-                      dot={{ fill: '#10b981', r: 4 }}
+                      dot={{ fill: "#10b981", r: 4 }}
                       activeDot={{ r: 6 }}
                     />
                   </LineChart>
@@ -183,14 +398,14 @@ export function Insights() {
                         dataKey="amount"
                       >
                         {spendingByCategory.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          <Cell key={`cell-${entry.category}`} fill={COLORS[index % COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip 
-                        contentStyle={{ 
-                          backgroundColor: '#fff', 
-                          border: '1px solid #e2e8f0',
-                          borderRadius: '8px'
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#fff",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: "8px",
                         }}
                       />
                     </PieChart>
@@ -209,8 +424,8 @@ export function Insights() {
                       <div key={category.category} className="space-y-2">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <div 
-                              className="w-3 h-3 rounded-full" 
+                            <div
+                              className="w-3 h-3 rounded-full"
                               style={{ backgroundColor: COLORS[index % COLORS.length] }}
                             />
                             <span className="font-medium text-slate-900">{category.category}</span>
@@ -219,17 +434,17 @@ export function Insights() {
                             <span className="font-semibold text-slate-900">
                               {currency}{category.amount.toFixed(2)}
                             </span>
-                            {category.trend === 'up' && <TrendingUp className="w-4 h-4 text-red-600" />}
-                            {category.trend === 'down' && <TrendingDown className="w-4 h-4 text-emerald-600" />}
-                            {category.trend === 'stable' && <Minus className="w-4 h-4 text-slate-400" />}
+                            {category.trend === "up" && <TrendingUp className="w-4 h-4 text-red-600" />}
+                            {category.trend === "down" && <TrendingDown className="w-4 h-4 text-emerald-600" />}
+                            {category.trend === "stable" && <Minus className="w-4 h-4 text-slate-400" />}
                           </div>
                         </div>
                         <div className="w-full bg-slate-100 rounded-full h-2">
                           <div
                             className="h-2 rounded-full transition-all"
                             style={{
-                              width: `${category.percentage}%`,
-                              backgroundColor: COLORS[index % COLORS.length]
+                              width: `${Math.max(2, category.percentage)}%`,
+                              backgroundColor: COLORS[index % COLORS.length],
                             }}
                           />
                         </div>
@@ -253,11 +468,11 @@ export function Insights() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis dataKey="category" stroke="#64748b" />
                     <YAxis stroke="#64748b" />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: '#fff', 
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '8px'
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#fff",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "8px",
                       }}
                     />
                     <Bar dataKey="amount" fill="#10b981" radius={[8, 8, 0, 0]} />
@@ -277,34 +492,33 @@ export function Insights() {
       >
         <Card className="bg-gradient-to-br from-indigo-50 to-purple-50 border-indigo-200">
           <CardHeader>
-            <CardTitle className="text-indigo-900">📊 Monthly Wrap-up</CardTitle>
-            <CardDescription className="text-indigo-700">
-              March 2026 Summary (So Far)
-            </CardDescription>
+            <CardTitle className="text-indigo-900">Monthly Wrap-up</CardTitle>
+            <CardDescription className="text-indigo-700">{monthLabel} Summary (So Far)</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white p-4 rounded-lg">
                 <p className="text-sm text-slate-600">Total Spent</p>
-                <p className="text-2xl font-bold text-slate-900">{currency}464.63</p>
+                <p className="text-2xl font-bold text-slate-900">{currency}{totalSpentThisMonth.toFixed(2)}</p>
               </div>
               <div className="bg-white p-4 rounded-lg">
                 <p className="text-sm text-slate-600">Transactions</p>
-                <p className="text-2xl font-bold text-slate-900">10</p>
+                <p className="text-2xl font-bold text-slate-900">{currentMonthTransactionsCount}</p>
               </div>
               <div className="bg-white p-4 rounded-lg">
                 <p className="text-sm text-slate-600">Most Spent On</p>
-                <p className="text-lg font-bold text-slate-900">Shopping</p>
+                <p className="text-lg font-bold text-slate-900">{topCategory.category}</p>
               </div>
               <div className="bg-white p-4 rounded-lg">
                 <p className="text-sm text-slate-600">Busiest Day</p>
-                <p className="text-lg font-bold text-slate-900">Mar 10</p>
+                <p className="text-lg font-bold text-slate-900">{busiestDay}</p>
               </div>
             </div>
             <div className="bg-white p-4 rounded-lg">
-              <p className="text-sm text-indigo-700 font-medium">💡 Insight</p>
-              <p className="text-slate-600 mt-1">
-                You're spending 15% less on dining out compared to last month. Keep it up!
+              <p className="text-sm text-indigo-700 font-medium">Insight</p>
+              <p className="text-slate-600 mt-1">{monthlyInsight}</p>
+              <p className="text-xs text-slate-500 mt-2">
+                Last month spend: {currency}{lastMonthSpending.toFixed(2)}
               </p>
             </div>
           </CardContent>

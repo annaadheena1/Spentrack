@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -19,26 +19,26 @@ import {
 import { encouragementMessages, highSpendApps } from "../lib/mockData";
 import confetti from "canvas-confetti";
 import { toast } from "sonner";
-import { PurchaseNotification } from "../components/PurchaseNotification";
 import { MiscSpendingModal } from "../components/MiscSpendingModal";
 import { AdminDebugSMSInput } from "../components/AdminDebugSMSInput";
 import { useCurrency } from "../hooks/useCurrency";
-import { generateSpendingFeedback, type SpendingContext } from "../lib/geminiService";
 import { useRealtimeBalance } from "../hooks/useRealtimeBalance";
 import { useLiveTransactions } from "../hooks/useLiveTransactions";
-import { useSMSProcessor } from "../hooks/useSMSProcessor";
+import { emitPurchaseDecisionPrompt, useSMSProcessor } from "../hooks/useSMSProcessor";
+import { useFinancialSettings } from "../hooks/useFinancialSettings";
 
 export function Dashboard() {
   const currency = useCurrency();
   const { transactions, addTransaction } = useLiveTransactions();
+  const { balanceThreshold, weeklyBudget } = useFinancialSettings();
   const { processSMS } = useSMSProcessor();
-  const [balanceThreshold, setBalanceThreshold] = useState(500);
   const [showEncouragement, setShowEncouragement] = useState(false);
-  const [showPurchaseNotification, setShowPurchaseNotification] = useState(false);
-  const [selectedApp, setSelectedApp] = useState<{ name: string; icon: string; avgSpend: number; amount?: number } | null>(null);
   const [showMiscModal, setShowMiscModal] = useState(false);
   const [miscSpendings, setMiscSpendings] = useState<Array<{ id: string; amount: number; description: string; date: Date }>>([]);
   const [isLowBalanceFlash, setIsLowBalanceFlash] = useState(false);
+  const nearLimitWarningShownRef = useRef(false);
+  const overLimitWarningShownRef = useRef(false);
+  const wasBelowThresholdRef = useRef(false);
   const balanceCardControls = useAnimation();
 
   useEffect(() => {
@@ -47,7 +47,6 @@ export function Dashboard() {
 
   const currentBalance = transactions[0]?.balance ?? 0;
   const recentTransactions = transactions.slice(0, 5);
-  const weeklyBudget = 600;
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const sevenDaysAgo = new Date(startOfToday);
@@ -62,30 +61,89 @@ export function Dashboard() {
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
   const averageDailySpent = weeklySpent / 7;
-  const budgetProgress = weeklyBudget > 0 ? Math.min(100, (weeklySpent / weeklyBudget) * 100) : 0;
+  const budgetUsagePercent = weeklyBudget > 0 ? (weeklySpent / weeklyBudget) * 100 : 0;
+  const budgetProgress = Math.min(100, Math.max(0, budgetUsagePercent));
+
+  const handleAppWarning = useCallback((
+    appName: string,
+    avgSpend: number,
+    amount?: number,
+    isCommitted = false,
+    appIcon?: string
+  ) => {
+    const app = highSpendApps.find((item) => item.name.toLowerCase() === appName.toLowerCase());
+    emitPurchaseDecisionPrompt({
+      appName,
+      appIcon: appIcon || app?.icon || "💰",
+      avgSpend,
+      amount: amount ?? avgSpend,
+      isCommitted,
+    });
+  }, []);
 
   useEffect(() => {
-    // Simulate checking balance threshold
     if (currentBalance < balanceThreshold) {
-      toast.error("Low Balance Alert", {
-        description: `Your balance (${currency}${currentBalance.toFixed(2)}) is below your threshold of ${currency}${balanceThreshold}.`,
-        duration: 5000,
+      if (!wasBelowThresholdRef.current) {
+        toast.error("Low Balance Alert", {
+          description: `Your balance is ${currency}${currentBalance.toFixed(2)}, below your ${currency}${balanceThreshold.toFixed(2)} threshold.`,
+          duration: 6000,
+        });
+      }
+
+      wasBelowThresholdRef.current = true;
+      return;
+    }
+
+    if (wasBelowThresholdRef.current) {
+      toast.success("Balance Recovered", {
+        description: `Your balance is back above ${currency}${balanceThreshold.toFixed(2)}. Keep the momentum going!`,
+        duration: 4500,
       });
     }
-  }, [currentBalance, balanceThreshold, currency]);
 
-  const triggerLowBalanceAlert = useCallback(async (newBalance: number) => {
+    wasBelowThresholdRef.current = false;
+  }, [balanceThreshold, currency, currentBalance]);
+
+  useEffect(() => {
+    const isNearLimit = budgetUsagePercent >= 80 && budgetUsagePercent < 100;
+
+    if (isNearLimit && !nearLimitWarningShownRef.current) {
+      toast.warning("Budget Limit Almost Over", {
+        description: `You've used ${budgetUsagePercent.toFixed(0)}% of your weekly budget (${currency}${weeklySpent.toFixed(2)} / ${currency}${weeklyBudget.toFixed(2)}).`,
+        duration: 6000,
+      });
+      nearLimitWarningShownRef.current = true;
+    }
+
+    if (!isNearLimit) {
+      nearLimitWarningShownRef.current = false;
+    }
+  }, [budgetUsagePercent, currency, weeklyBudget, weeklySpent]);
+
+  useEffect(() => {
+    const isOverLimit = budgetUsagePercent >= 100;
+
+    if (isOverLimit && !overLimitWarningShownRef.current) {
+      toast.error("Budget Limit Reached", {
+        description: `You are over your weekly limit by ${currency}${Math.max(0, weeklySpent - weeklyBudget).toFixed(2)}.`,
+        duration: 7000,
+      });
+      overLimitWarningShownRef.current = true;
+    }
+
+    if (!isOverLimit) {
+      overLimitWarningShownRef.current = false;
+    }
+  }, [budgetUsagePercent, currency, weeklyBudget, weeklySpent]);
+
+  const triggerLowBalanceAlert = useCallback(async () => {
     setIsLowBalanceFlash(true);
     await balanceCardControls.start({
       x: [0, -14, 14, -10, 10, -6, 6, 0],
       transition: { duration: 0.6, ease: "easeInOut" },
     });
     setIsLowBalanceFlash(false);
-    toast.error("⚠️ Low Balance Alert", {
-      description: `A new transaction dropped your balance to ${currency}${newBalance.toFixed(2)} — below your ${currency}${balanceThreshold} threshold!`,
-      duration: 6000,
-    });
-  }, [balanceCardControls, balanceThreshold, currency]);
+  }, [balanceCardControls]);
 
   const registerIncomingTransaction = useCallback((params: {
     amount: number;
@@ -113,8 +171,17 @@ export function Dashboard() {
       return;
     }
 
+    if (result.transaction.type === "debit") {
+      handleAppWarning(
+        params.appName || params.merchant || "Card Purchase",
+        amount,
+        amount,
+        true
+      );
+    }
+
     if (result.transaction.balance < balanceThreshold) {
-      void triggerLowBalanceAlert(result.transaction.balance);
+      void triggerLowBalanceAlert();
       return;
     }
 
@@ -125,7 +192,7 @@ export function Dashboard() {
       }`,
       { duration: 4000 }
     );
-  }, [addTransaction, balanceThreshold, currency, triggerLowBalanceAlert]);
+  }, [addTransaction, balanceThreshold, currency, handleAppWarning, triggerLowBalanceAlert]);
 
   const handleRealtimeTransaction = useCallback((row: {
     amount?: number | string;
@@ -161,12 +228,6 @@ export function Dashboard() {
     setTimeout(() => setShowEncouragement(false), 3000);
   };
 
-  const handleAppWarning = (appName: string, avgSpend: number, amount?: number) => {
-    const app = highSpendApps.find(a => a.name === appName);
-    setSelectedApp({ name: appName, icon: app?.icon || '💰', avgSpend, amount });
-    setShowPurchaseNotification(true);
-  };
-
   const handleAddMiscSpending = (description: string) => {
     // Find the last misc spending and update its description
     const lastMiscSpending = miscSpendings[0];
@@ -199,7 +260,7 @@ export function Dashboard() {
     });
 
     if (miscResult && !miscResult.isDuplicate && miscResult.transaction.balance < balanceThreshold) {
-      void triggerLowBalanceAlert(miscResult.transaction.balance);
+      void triggerLowBalanceAlert();
     }
     
     // Then show notification asking what it was
@@ -214,44 +275,11 @@ export function Dashboard() {
     }, 500);
   };
 
-  const handlePurchaseSave = async () => {
-    setShowPurchaseNotification(false);
-    handleGoodChoice();
-    if (selectedApp) {
-      const ctx: SpendingContext = {
-        amount: selectedApp.amount ?? selectedApp.avgSpend,
-        avgSpend: selectedApp.avgSpend,
-        currentBalance,
-        weeklySpent,
-        weeklyBudget,
-      };
-      const msg = await generateSpendingFeedback(selectedApp.name, ctx, "toast");
-      toast.success(`🥂 ${msg}`, { duration: 6000 });
-    }
-  };
-
-  const handlePurchaseContinue = async () => {
-    setShowPurchaseNotification(false);
-    if (selectedApp) {
-      const ctx: SpendingContext = {
-        amount: selectedApp.amount ?? selectedApp.avgSpend,
-        avgSpend: selectedApp.avgSpend,
-        currentBalance,
-        weeklySpent,
-        weeklyBudget,
-      };
-      const msg = await generateSpendingFeedback(selectedApp.name, ctx, "roast");
-      toast.warning(`🔥 ${msg}`, { duration: 10000 });
-    } else {
-      toast.info("Good luck with your purchase!");
-    }
-  };
-
   const handleSimulateSMS = async (text: string) => {
     await processSMS(text, {
-      onHighSpendApp: handleAppWarning,
       showReceivedToast: true,
       showTransactionToast: true,
+      showPurchasePrompt: true,
     });
   };
 
@@ -570,17 +598,6 @@ export function Dashboard() {
           </CardContent>
         </Card>
       </motion.div>
-
-      {/* Purchase Notification - rendered outside page flow so it always overlays */}
-      <PurchaseNotification
-        isOpen={showPurchaseNotification && !!selectedApp}
-        appName={selectedApp?.name ?? ""}
-        appIcon={selectedApp?.icon ?? "💰"}
-        avgSpend={selectedApp?.avgSpend ?? 0}
-        onClose={() => setShowPurchaseNotification(false)}
-        onSave={handlePurchaseSave}
-        onContinue={handlePurchaseContinue}
-      />
 
       {/* Misc Spending Modal */}
       {showMiscModal && (

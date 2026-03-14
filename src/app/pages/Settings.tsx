@@ -21,14 +21,17 @@ import {
 import { motion } from "motion/react";
 import { toast } from "sonner";
 import { getAutoSMSSimulationEnabled, setAutoSMSSimulationEnabled } from "../lib/smsSimulator";
+import { getFinancialSettings, saveFinancialSettings } from "../lib/financialSettings";
 
 export function Settings() {
+  const initialFinancialSettings = getFinancialSettings();
   const [userName, setUserName] = useState("John Doe");
   const [userPhone, setUserPhone] = useState(localStorage.getItem("userPhone") || "+1 (555) 000-0000");
   const [profilePic, setProfilePic] = useState("");
-  const [balanceThreshold, setBalanceThreshold] = useState(500);
-  const [weeklyBudget, setWeeklyBudget] = useState(600);
-  const [monthlyBudget, setMonthlyBudget] = useState(2500);
+  const [balanceThreshold, setBalanceThreshold] = useState(initialFinancialSettings.balanceThreshold);
+  const [weeklyBudget, setWeeklyBudget] = useState(initialFinancialSettings.weeklyBudget);
+  const [monthlyBudget, setMonthlyBudget] = useState(initialFinancialSettings.monthlyBudget);
+  const [hourlyWage, setHourlyWage] = useState(initialFinancialSettings.hourlyWage);
   const [notifications, setNotifications] = useState({
     lowBalance: true,
     spending: true,
@@ -41,8 +44,15 @@ export function Settings() {
 
   const handleSave = () => {
     localStorage.setItem("userName", userName);
+    saveFinancialSettings({
+      balanceThreshold,
+      weeklyBudget,
+      monthlyBudget,
+      hourlyWage,
+    });
+
     toast.success("Settings Saved", {
-      description: "Your preferences have been updated successfully.",
+      description: "Your preferences, budgets, and work-hour rate have been updated.",
       duration: 3000,
     });
   };
@@ -227,6 +237,25 @@ export function Settings() {
                   className="pl-7"
                 />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="hourly-wage">Hourly Income Rate</Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-500">
+                  $
+                </span>
+                <Input
+                  id="hourly-wage"
+                  type="number"
+                  value={hourlyWage}
+                  onChange={(e) => setHourlyWage(Number(e.target.value))}
+                  className="pl-7"
+                />
+              </div>
+              <p className="text-sm text-slate-500">
+                Used to show how many hours of work a purchase costs when roasting spending decisions.
+              </p>
             </div>
           </CardContent>
         </Card>

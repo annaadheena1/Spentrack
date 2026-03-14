@@ -3,12 +3,35 @@ import { toast } from "sonner";
 import { useCurrency } from "./useCurrency";
 import { useLiveTransactions } from "./useLiveTransactions";
 import { parseAndStoreSMS, type ParseAndStoreSMSResult } from "../lib/smsParser";
+import { highSpendApps } from "../lib/mockData";
 
 interface ProcessSMSOptions {
-  onHighSpendApp?: (appName: string, avgSpend: number, amount?: number) => void;
   showReceivedToast?: boolean;
   showTransactionToast?: boolean;
+  showPurchasePrompt?: boolean;
   sourceLabel?: string;
+}
+
+export interface PurchaseDecisionPromptPayload {
+  appName: string;
+  appIcon: string;
+  avgSpend: number;
+  amount: number;
+  isCommitted: boolean;
+}
+
+export const PURCHASE_DECISION_PROMPT_EVENT = "spentrack:purchase-decision-prompt";
+
+export function emitPurchaseDecisionPrompt(payload: PurchaseDecisionPromptPayload) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(
+    new CustomEvent<PurchaseDecisionPromptPayload>(PURCHASE_DECISION_PROMPT_EVENT, {
+      detail: payload,
+    })
+  );
 }
 
 export function useSMSProcessor() {
@@ -50,10 +73,21 @@ export function useSMSProcessor() {
         );
         announcedTransaction = true;
       }
-    }
 
-    if (result.parsed?.appName && result.parsed.avgSpend && options.onHighSpendApp) {
-      options.onHighSpendApp(result.parsed.appName, result.parsed.avgSpend, result.parsed.amount);
+      if (addResult && !addResult.isDuplicate && options.showPurchasePrompt !== false) {
+        const appName = result.parsed.appName || result.parsed.merchant || "Card Purchase";
+        const app = highSpendApps.find(
+          (item) => item.name.toLowerCase() === appName.toLowerCase()
+        );
+
+        emitPurchaseDecisionPrompt({
+          appName,
+          appIcon: app?.icon || "💳",
+          avgSpend: result.parsed.avgSpend ?? app?.avgSpend ?? result.parsed.amount,
+          amount: result.parsed.amount,
+          isCommitted: true,
+        });
+      }
     }
 
     if (!announcedTransaction && options.showReceivedToast !== false) {
