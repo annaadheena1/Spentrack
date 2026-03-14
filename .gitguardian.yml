@@ -1,0 +1,5 @@
+# .gitguardian.yml
+paths-ignore:
+  - ".env"
+  - ".env.*"
+  - "dist/**"

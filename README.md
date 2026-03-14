@@ -29,4 +29,25 @@
     received_at timestamptz not null default now()
   );
   ```
+
+  ## Secret Protection With GitGuardian
+
+  This repo is configured to use GitGuardian to help catch leaked secrets before they are committed or merged.
+
+  Local setup:
+
+  1. Install `ggshield`.
+  2. Export your GitGuardian API key: `export GITGUARDIAN_API_KEY=your_gitguardian_api_key`.
+  3. Install the local pre-commit hook: `bash scripts/install-gitguardian-hook.sh`.
+  4. Run a manual scan any time with `npm run secrets:scan`.
+
+  GitHub Actions setup:
+
+  1. Add a repository secret named `GITGUARDIAN_API_KEY` in GitHub.
+  2. The workflow in `.github/workflows/gitguardian.yml` will scan pushes and pull requests automatically.
+
+  Notes:
+
+  - Keep real keys only in ignored local env files such as `.env`.
+  - `.env.example` must stay placeholder-only so sample config never exposes live credentials.
   
