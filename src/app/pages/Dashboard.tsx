@@ -23,14 +23,15 @@ import { PurchaseNotification } from "../components/PurchaseNotification";
 import { MiscSpendingModal } from "../components/MiscSpendingModal";
 import { AdminDebugSMSInput } from "../components/AdminDebugSMSInput";
 import { useCurrency } from "../hooks/useCurrency";
-import { parseAndStoreSMS } from "../lib/smsParser";
 import { generateSpendingFeedback, type SpendingContext } from "../lib/geminiService";
 import { useRealtimeBalance } from "../hooks/useRealtimeBalance";
 import { useLiveTransactions } from "../hooks/useLiveTransactions";
+import { useSMSProcessor } from "../hooks/useSMSProcessor";
 
 export function Dashboard() {
   const currency = useCurrency();
   const { transactions, addTransaction } = useLiveTransactions();
+  const { processSMS } = useSMSProcessor();
   const [balanceThreshold, setBalanceThreshold] = useState(500);
   const [showEncouragement, setShowEncouragement] = useState(false);
   const [showPurchaseNotification, setShowPurchaseNotification] = useState(false);
@@ -247,32 +248,10 @@ export function Dashboard() {
   };
 
   const handleSimulateSMS = async (text: string) => {
-    const userId = localStorage.getItem("userPhone") || "demo-user";
-    const result = await parseAndStoreSMS(text, userId);
-
-    if (!result.success) {
-      toast.error("SMS parse failed", {
-        description: result.message || "Could not parse simulated SMS.",
-      });
-      return;
-    }
-
-    if (result.parsed?.amount) {
-      registerIncomingTransaction({
-        amount: result.parsed.amount,
-        merchant: result.parsed.merchant,
-        appName: result.parsed.appName,
-        timestamp: result.parsed.timestamp,
-        type: "debit",
-      });
-    }
-
-    if (result.parsed?.appName && result.parsed.avgSpend) {
-      handleAppWarning(result.parsed.appName, result.parsed.avgSpend, result.parsed.amount);
-    }
-
-    toast.success("SMS received and parsed", {
-      description: result.message || "The dashboard has been refreshed with simulated SMS data.",
+    await processSMS(text, {
+      onHighSpendApp: handleAppWarning,
+      showReceivedToast: true,
+      showTransactionToast: true,
     });
   };
 

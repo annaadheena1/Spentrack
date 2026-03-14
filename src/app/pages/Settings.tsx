@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { toast } from "sonner";
+import { getAutoSMSSimulationEnabled, setAutoSMSSimulationEnabled } from "../lib/smsSimulator";
 
 export function Settings() {
   const [userName, setUserName] = useState("John Doe");
@@ -36,6 +37,7 @@ export function Settings() {
     encouragement: true,
   });
   const [spendingAlertSensitivity, setSpendingAlertSensitivity] = useState([70]);
+  const [autoSMSDemoEnabled, setAutoSMSDemoEnabled] = useState(() => getAutoSMSSimulationEnabled());
 
   const handleSave = () => {
     localStorage.setItem("userName", userName);
@@ -409,6 +411,27 @@ export function Settings() {
             <div className="space-y-2">
               <Label>Connected Bank</Label>
               <Input value="Chase Bank ••••1234" disabled />
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg border border-slate-200 p-4">
+              <div className="pr-4">
+                <p className="font-medium text-slate-900">Automatic SMS demo feed</p>
+                <p className="text-sm text-slate-500 mt-1">
+                  Generate realistic spending SMS messages every few seconds so the dashboard updates itself.
+                </p>
+              </div>
+              <Switch
+                checked={autoSMSDemoEnabled}
+                onCheckedChange={(checked) => {
+                  setAutoSMSDemoEnabled(checked);
+                  setAutoSMSSimulationEnabled(checked);
+                  toast.success(checked ? "Auto SMS demo enabled" : "Auto SMS demo paused", {
+                    description: checked
+                      ? "New simulated spend messages will start flowing into the app automatically."
+                      : "Automatic spending SMS simulation has been turned off.",
+                  });
+                }}
+              />
             </div>
 
             <Button variant="outline" className="w-full">

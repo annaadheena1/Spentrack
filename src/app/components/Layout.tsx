@@ -2,10 +2,12 @@ import { Outlet, Link, useLocation } from "react-router";
 import { Home, TrendingUp, Receipt, Settings, Bell } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Logo } from "./Logo";
+import { useAutoSMSSimulator } from "../hooks/useAutoSMSSimulator";
 
 export function Layout() {
   const location = useLocation();
   const notifications = 2; // Mock notification count
+  const isAutoSMSSimulatorEnabled = useAutoSMSSimulator();
 
   const navItems = [
     { path: "/dashboard", icon: Home, label: "Dashboard" },
@@ -23,7 +25,14 @@ export function Layout() {
             <div className="flex items-center gap-3">
               <Logo className="w-10 h-10" />
               <div>
-                <h1 className="font-bold text-slate-900">SpenTrack</h1>
+                <div className="flex items-center gap-2">
+                  <h1 className="font-bold text-slate-900">SpenTrack</h1>
+                  {isAutoSMSSimulatorEnabled && (
+                    <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 border-emerald-200">
+                      Auto SMS
+                    </Badge>
+                  )}
+                </div>
                 <p className="text-xs text-slate-500">Smart Expense Tracking</p>
               </div>
             </div>
